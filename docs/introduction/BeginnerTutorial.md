@@ -63,13 +63,17 @@ export function* helloSaga() {
 import { createStore, applyMiddleware } from 'redux'
 import createSagaMiddleware from 'redux-saga'
 
-//...
+// ...
 import { helloSaga } from './sagas'
 
+const sagaMiddleware = createSagaMiddleware()
 const store = createStore(
   reducer,
-  applyMiddleware(createSagaMiddleware(helloSaga))
+  applyMiddleware(sagaMiddleware)
 )
+sagaMiddleware.run(helloSaga)
+
+const action = type => store.dispatch({type})
 
 // rest unchanged
 ```
@@ -90,11 +94,21 @@ const store = createStore(
 ```javascript
 const Counter = ({ value, onIncrement, onDecrement, onIncrementAsync }) =>
   <div>
-    ...
+    <button onClick={onIncrementAsync}>
+      Increment after 1 second
+    </button>
     {' '}
-    <button onClick={onIncrementAsync}>Increment after 1 second</button>
+    <button onClick={onIncrement}>
+      Increment
+    </button>
+    {' '}
+    <button onClick={onDecrement}>
+      Decrement
+    </button>
     <hr />
-    <div>Clicked: {value} times</div>
+    <div>
+      Clicked: {value} times
+    </div>
   </div>
 ```
 
@@ -106,9 +120,10 @@ const Counter = ({ value, onIncrement, onDecrement, onIncrementAsync }) =>
 function render() {
   ReactDOM.render(
     <Counter
-      ...
-      onIncrementAsync={() => action('INCREMENT_ASYNC')}
-    />,
+      value={store.getState()}
+      onIncrement={() => action('INCREMENT')}
+      onDecrement={() => action('DECREMENT')}
+      onIncrementAsync={() => action('INCREMENT_ASYNC')} />,
     document.getElementById('root')
   )
 }
@@ -126,21 +141,20 @@ function render() {
 添加以下代码到 `sagas.js` 模块：
 
 ```javascript
-import { takeEvery } from 'redux-saga'
-import { put } from 'redux-saga/effects'
+import { delay } from 'redux-saga'
+import { put, takeEvery } from 'redux-saga/effects'
 
-// 一个工具函数：返回一个 Promise，这个 Promise 将在 1 秒后 resolve
-export const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+// ...
 
-// Our worker Saga: 将异步执行 increment 任务
+// Our worker Saga: will perform the async increment task
 export function* incrementAsync() {
   yield delay(1000)
   yield put({ type: 'INCREMENT' })
 }
 
-// Our watcher Saga: 在每个 INCREMENT_ASYNC action 调用后，派生一个新的 incrementAsync 任务
+// Our watcher Saga: spawn a new incrementAsync task on each INCREMENT_ASYNC
 export function* watchIncrementAsync() {
-  yield* takeEvery('INCREMENT_ASYNC', incrementAsync)
+  yield takeEvery('INCREMENT_ASYNC', incrementAsync)
 }
 ```
 
@@ -163,22 +177,48 @@ Sagas 被实现为 Generator 函数，它 yield 对象到 redux-saga middleware�
 接下来，我们创建了另一个 Saga `watchIncrementAsync`。这个 Saga 将监听所有发起的 `INCREMENT_ASYNC` action，并在每次 action 被匹配时派生一个新的 `incrementAsync` 任务。
 为了实现这个目的，我们使用一个辅助函数 `takeEvery` 来执行以上的处理过程。
 
-在我们开始这个应用之前，我们需要将 `watchIncrementAsync` 这个 Saga 连接至 Store：
+现在我们有两个Sagas，并且我们需要在一开始启动他们。为了实现这个，我们添加一个rootSaga负责启动我们的Sogas。在同一个sagas.js文件中，按下面重构:
+
 
 ```javascript
+import { delay } from 'redux-saga'
+import { put, takeEvery, all } from 'redux-saga/effects'
 
-//...
-import { helloSaga, watchIncrementAsync } from './sagas'
+function* helloSaga() {
+  console.log('Hello Sagas!')
+}
 
-const store = createStore(
-  reducer,
-  applyMiddleware(createSagaMiddleware(helloSaga, watchIncrementAsync))
-)
+export function* incrementAsync() {
+  yield delay(1000)
+  yield put({ type: 'INCREMENT' })
+}
 
-//...
+export function* watchIncrementAsync() {
+  yield takeEvery('INCREMENT_ASYNC', incrementAsync)
+}
+
+// notice how we now only export the rootSaga
+// single entry point to start all Sagas at once
+export default function* rootSaga() {
+  yield all([
+    helloSaga(),
+    watchIncrementAsync()
+  ])
+}
 ```
 
-注意我们不需要连接 `incrementAsync` 这个 Saga，因为它会在每次 `INCREMENT_ASYNC` action 发起时被 `watchIncrementAsync` 动态启动。
+这个Saga 用yields合并结果输出2个sagas，helloSaga 和 watchIncrementAsync。这意味着两个Generators会在会同时被启动返回结果。现在我们只需在main.js中调用sagaMiddleware执行run Saga。
+
+```javascript
+// ...
+import rootSaga from './sagas'
+
+const sagaMiddleware = createSagaMiddleware()
+const store = ...
+sagaMiddleware.run(rootSaga)
+
+// ...
+```
 
 
 ## 让我们的代码可测试
